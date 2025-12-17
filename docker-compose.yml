@@ -1,0 +1,120 @@
+services:
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app
+      - ./base_models:/app/base_models
+      - ./lora_models:/app/lora_models
+      - ./awq_models:/app/awq_models
+      - ./gguf_models:/app/gguf_models
+      - ./data:/app/data
+      - ./datasets:/app/datasets
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - PYTHONUNBUFFERED=1
+      - OLLAMA_GPU_URL=http://ollama-gpu:11434
+      - OLLAMA_CPU_URL=http://ollama-cpu:11434
+      - VLLM_URL=http://vllm:8000
+      - UNSLOTH_URL=http://unsloth:8003
+      # COMPOSE_PROJECT_NAMEは、docker-compose.ymlが置かれているフォルダ名から
+      # Docker Composeが自動的に設定する環境変数です。
+      # ユーザーが手動で設定する必要はありません。
+      # このプロジェクト名（コンテナ群の識別名）をUIコンテナ内で利用可能にするために渡しています。
+      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME}
+    depends_on:
+      ollama-gpu:
+        condition: service_healthy
+      ollama-cpu:
+        condition: service_healthy
+      vllm:
+        condition: service_started
+    command: streamlit run app.py
+
+  unsloth:
+    build:
+      context: .
+      dockerfile: Dockerfile.unsloth
+    ports:
+      - "8003:8003"
+    volumes:
+      - .:/app
+      - ./base_models:/app/base_models
+      - ./lora_models:/app/lora_models
+      - ./unsloth.log:/app/unsloth.log
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: tail -f /dev/null # Keep container running
+
+  vllm:
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm
+    ports:
+      - "8001:8000" # Expose vLLM's OpenAI-compatible API
+    volumes:
+      - .:/app
+      - ./base_models:/app/base_models
+      - ./lora_models:/app/lora_models
+      - ./vllm.log:/app/vllm.log
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    entrypoint: /bin/sh
+    command: -c "tail -f /dev/null" # Keep container running, server started via exec
+
+  ollama-gpu:
+    image: ollama/ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_gpu_data:/root/.ollama
+      - ./gguf_models:/root/.ollama/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-20m}
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-2}
+    healthcheck:
+      test: ["CMD", "ollama", "ps"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ollama-cpu:
+    image: ollama/ollama
+    ports:
+      - "11435:11434"
+    volumes:
+      - ollama_cpu_data:/root/.ollama
+      - ./gguf_models:/root/.ollama/models
+    environment:
+      - OLLAMA_NO_GPU=true
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-20m}
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-2}
+    healthcheck:
+      test: ["CMD", "ollama", "ps"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  ollama_gpu_data:
+  ollama_cpu_data:

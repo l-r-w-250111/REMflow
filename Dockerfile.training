@@ -1,0 +1,26 @@
+FROM unsloth/unsloth:2025.11.4-pt2.9.1-cu12.8-trans4.57.1-fp8rl
+
+
+# --- Switch to root for installing build tools ---
+USER root
+
+# Install dependencies for building llama.cpp
+RUN apt-get update && \
+    apt-get install -y git build-essential cmake && \
+    rm -rf /var/lib/apt/lists/*
+
+# --- Build llama.cpp (CPU only) ---
+RUN git clone https://github.com/ggerganov/llama.cpp.git /opt/llama.cpp && \
+    cd /opt/llama.cpp && \
+    mkdir build && \
+    cd build && \
+    cmake .. && \
+    make -j
+
+# --- Restore Original User's Ownership ---
+RUN chown -R unsloth:unsloth /opt/llama.cpp
+
+# --- Switch back to original user ---
+USER unsloth
+
+WORKDIR /app

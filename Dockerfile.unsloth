@@ -1,0 +1,9 @@
+FROM unsloth/unsloth:2025.11.2-pt2.8.0-cu12.8-trans4.57.0
+
+WORKDIR /app
+
+# Copy the requirements file
+COPY requirements.txt .
+
+# Install the Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt

@@ -1,0 +1,38 @@
+# Use the official vLLM image as the base
+FROM vllm/vllm-openai:latest
+
+# Set the working directory
+WORKDIR /app
+
+# Install system dependencies for building llama.cpp and other tools
+# USER root
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        git \
+        cmake \
+        build-essential \
+        libcurl4-openssl-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Build llama.cpp (CPU only for now, as GPU for llama.cpp is complex)
+RUN git clone https://github.com/ggerganov/llama.cpp.git /opt/llama.cpp && \
+    cd /opt/llama.cpp && \
+    mkdir build && \
+    cd build && \
+    cmake .. && \
+    make -j
+
+# Install dependencies for AWQ and BitsAndBytes quantization
+# vllm[awq] ensures all necessary dependencies for AWQ are installed.
+RUN pip install "vllm[awq]" bitsandbytes
+
+# Switch back to original user if the vLLM base image uses a non-root user
+# (vLLM images typically run as root, but it's good practice to be aware)
+# USER root # Assuming vLLM base image is root or we will handle user later if needed
+# The vLLM entrypoint will start the OpenAI-compatible server.
+# We will pass the model and other arguments via docker compose command.
+# The default entrypoint is configured to launch the server.
+# For example:
+# python -m vllm.entrypoints.openai.api_server --host 0.0.0.0 --port 8000
+# We don't need to override the CMD or ENTRYPOINT unless we have specific needs.
+

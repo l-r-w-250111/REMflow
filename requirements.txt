@@ -1,0 +1,5 @@
+# For AWQ Quantization
+autoawq
+
+# For progress bars
+tqdm

@@ -1,20 +1,15 @@
 import os
 import sys
 import torch
-import argparse
 import json
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 
-from unsloth import FastLanguageModel, unsloth_logger
+from unsloth import FastLanguageModel
 
 # Suppress Unsloth's welcome message on startup
 os.environ["UNSLOTH_SUPPRESS_STDOUT"] = "true"
-
-# Redirect logger to stderr
-unsloth_logger.remove()
-unsloth_logger.add(sys.stderr)
 
 # Global variables to hold the model and tokenizer
 model = None
@@ -27,25 +22,29 @@ async def lifespan(app: FastAPI):
     global model, tokenizer
     print("Starting Unsloth server lifespan...", file=sys.stderr)
 
-    # --- Argument Parsing ---
-    parser = argparse.ArgumentParser(description="FastAPI server for Unsloth model inference.")
-    parser.add_argument("--base_model_path", type=str, required=True, help="Path to the base model.")
-    parser.add_argument("--lora_model_path", type=str, default=None, help="Optional path to the LoRA adapter.")
-    # Port is handled by uvicorn, not needed here
-    args, _ = parser.parse_known_args() # Use parse_known_args to ignore uvicorn args
+    # --- Environment Variable Parsing ---
+    base_model_path = os.getenv("BASE_MODEL_PATH")
+    lora_model_path = os.getenv("LORA_MODEL_PATH", None)
 
-    print(f"Loading base model: {args.base_model_path}", file=sys.stderr)
+    if not base_model_path:
+        print("FATAL: BASE_MODEL_PATH environment variable is not set.", file=sys.stderr)
+        # The server will start, but endpoints will fail with 503.
+        # This allows the container to run and logs to be inspected.
+        yield
+        return # Exit the lifespan manager cleanly
+
+    print(f"Loading base model: {base_model_path}", file=sys.stderr)
     try:
         model, tokenizer = FastLanguageModel.from_pretrained(
-            model_name=args.base_model_path,
+            model_name=base_model_path,
             max_seq_length=2048,
             dtype=None,
             load_in_4bit=True,
         )
 
-        if args.lora_model_path and os.path.isdir(args.lora_model_path):
-            print(f"Loading and applying LoRA adapter from: {args.lora_model_path}", file=sys.stderr)
-            model.load_adapter(args.lora_model_path)
+        if lora_model_path and os.path.isdir(lora_model_path):
+            print(f"Loading and applying LoRA adapter from: {lora_model_path}", file=sys.stderr)
+            model.load_adapter(lora_model_path)
             print("LoRA adapter applied successfully.", file=sys.stderr)
 
         model.eval()
@@ -53,8 +52,7 @@ async def lifespan(app: FastAPI):
 
     except Exception as e:
         print(f"FATAL: Failed to load model. Error: {e}", file=sys.stderr)
-        # In a real app, you might want to exit or handle this more gracefully.
-        # For now, the server will start but endpoints will fail.
+        # Server will start but endpoints will fail.
 
     yield
     # This block runs on shutdown
@@ -82,7 +80,11 @@ async def health_check():
     if model is not None and tokenizer is not None:
         return {"status": "ok", "message": "Server and model are ready."}
     else:
-        raise HTTPException(status_code=503, detail="Server is running, but model is not loaded.")
+        # Provide a more specific error message if the model path was missing
+        if not os.getenv("BASE_MODEL_PATH"):
+            raise HTTPException(status_code=503, detail="Server is running, but model is not loaded: BASE_MODEL_PATH env var was not set.")
+        else:
+            raise HTTPException(status_code=503, detail="Server is running, but model failed to load. Check server logs.")
 
 @app.post("/generate", response_model=GenerateResponse)
 async def generate_text(request: GenerateRequest):
@@ -120,6 +122,5 @@ async def generate_text(request: GenerateRequest):
 if __name__ == "__main__":
     import uvicorn
     # This is for local debugging only. The app will be started by `uvicorn unsloth_server:app ...`
-    # Arguments need to be passed via command line, e.g.:
-    # uvicorn unsloth_server:app --host 0.0.0.0 --port 8003 -- --base_model_path ./base_models/your_model
+    # Environment variables (BASE_MODEL_PATH) must be set before running.
     uvicorn.run(app, host="0.0.0.0", port=8003)

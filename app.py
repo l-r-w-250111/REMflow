@@ -307,20 +307,12 @@ with st.sidebar:
                             st.error(f"Failed to set model permissions via Docker exec: {e.stderr}")
                             st.stop()
 
-                        server_cmd_parts = [
-                            "uvicorn", "unsloth_server:app",
-                            "--host", "0.0.0.0", "--port", "8003",
-                            "--base_model_path", model_path_in_container
-                        ]
-                        if st.session_state.unsloth_lora_model != "None":
-                            lora_path_in_container = os.path.join("/app/lora_models", st.session_state.unsloth_lora_model)
-                            server_cmd_parts.extend(["--lora_model_path", lora_path_in_container])
-
-                        server_cmd = " ".join(server_cmd_parts)
-
+                        # The uvicorn command no longer takes model paths as arguments
+                        server_cmd = "uvicorn unsloth_server:app --host 0.0.0.0 --port 8003"
+                        
                         log_file_path_host = "unsloth.log"
                         log_file_path_container = "/app/unsloth.log"
-                        
+
                         # Clear previous log file
                         if os.path.exists(log_file_path_host):
                             os.remove(log_file_path_host)
@@ -328,7 +320,19 @@ with st.sidebar:
                         shell_command = f"{server_cmd} > {log_file_path_container} 2>&1"
                         
                         command = get_docker_compose_command()
-                        command.extend(["exec", "-d", "unsloth", "sh", "-c", shell_command])
+                        
+                        # Prepare environment variables to be passed to the exec command
+                        env_vars = [
+                            "-e", f"BASE_MODEL_PATH={model_path_in_container}"
+                        ]
+                        if st.session_state.unsloth_lora_model != "None":
+                            lora_path_in_container = os.path.join("/app/lora_models", st.session_state.unsloth_lora_model)
+                            env_vars.extend(["-e", f"LORA_MODEL_PATH={lora_path_in_container}"])
+
+                        # Construct the final docker compose command with environment variables
+                        command.extend(["exec"])
+                        command.extend(env_vars) # Add environment variables
+                        command.extend(["-d", "unsloth", "sh", "-c", shell_command])
                         
                         subprocess.Popen(command)
                         st.info("Unsloth server is starting. Polling for readiness...")

@@ -20,10 +20,6 @@ services:
       - OLLAMA_CPU_URL=http://ollama-cpu:11434
       - VLLM_URL=http://vllm:8000
       - UNSLOTH_URL=http://unsloth:8003
-      # COMPOSE_PROJECT_NAMEは、docker-compose.ymlが置かれているフォルダ名から
-      # Docker Composeが自動的に設定する環境変数です。
-      # ユーザーが手動で設定する必要はありません。
-      # このプロジェクト名（コンテナ群の識別名）をUIコンテナ内で利用可能にするために渡しています。
       - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME}
     depends_on:
       ollama-gpu:

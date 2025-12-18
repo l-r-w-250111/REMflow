@@ -44,7 +44,6 @@ services:
       - .:/app
       - ./base_models:/app/base_models
       - ./lora_models:/app/lora_models
-      - ./unsloth.log:/app/unsloth.log
     deploy:
       resources:
         reservations:
@@ -64,7 +63,6 @@ services:
       - .:/app
       - ./base_models:/app/base_models
       - ./lora_models:/app/lora_models
-      - ./vllm.log:/app/vllm.log
     deploy:
       resources:
         reservations:

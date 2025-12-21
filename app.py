@@ -891,19 +891,20 @@ with st.sidebar:
             else:
                 model_path = os.path.join(base_model_dir, selected_base_model_deploy)
                 command = get_docker_compose_command()
+                # Execute in 'vllm' container with 'python3'
                 command.extend([
-                    "exec", "unsloth", "python", "/app/quantize_to_awq.py",
+                    "exec", "vllm", "python3", "/app/quantize_to_awq.py",
                     "--model_path", model_path,
                     "--output_path", awq_output_path
                 ])
 
-                # Add lora if selected
+                # Add lora if selected (this functionality is preserved)
                 if selected_loras:
                     command.append("--lora_names")
                     command.extend(selected_loras)
                 
-                if is_4bit_model:
-                    command.append("--is_4bit")
+                # The --is_4bit flag was specific to the Unsloth loader and is no longer needed.
+                # The new script uses the standard transformers library.
 
                 with st.spinner(f"Quantizing '{selected_base_model_deploy}' to AWQ..."):
                     st.write("Running command:")
@@ -1010,6 +1011,8 @@ if prompt := st.chat_input("What is your question?"):
                 router_prompt = f"""
                 Given the user's query, decide if you should use a web search for up-to-date information
                 or a local document search (RAG) for contextual information.
+                ユーザーの質問に基づき、最新情報を得るために「ウェブ検索」を利用すべきか、あるいはコンテキスト情報を得るために
+                「ローカルドキュメント検索（RAG）」を利用すべきかを判断してください。
 
                 User Query: "{prompt}"
 
@@ -1030,9 +1033,10 @@ if prompt := st.chat_input("What is your question?"):
                         st.error(f"Error in routing: {e}")
 
                 elif st.session_state.inference_engine == "Unsloth":
+                    # Use the non-streaming endpoint for the synchronous routing task
                     try:
-                        payload = {"prompt": router_prompt, "history": []}
-                        response = requests.post(f"{UNSLOTH_URL}/generate", json=payload)
+                        payload = {"prompt": router_prompt}
+                        response = requests.post(f"{UNSLOTH_URL}/generate_non_streaming", json=payload)
                         response.raise_for_status()
                         decision = response.json().get("response", "RAG").strip().upper()
                     except requests.exceptions.RequestException as e:
@@ -1048,17 +1052,34 @@ if prompt := st.chat_input("What is your question?"):
                     retrieved_nodes = retriever.retrieve(prompt)
                     context = "\n".join([node.get_content() for node in retrieved_nodes])
 
+            # Limit the context length to avoid exceeding the model's token limit.
+            # This is a safeguard against overly large documents in the RAG index.
+            MAX_CONTEXT_CHAR_LENGTH = 10000
+            if len(context) > MAX_CONTEXT_CHAR_LENGTH:
+                context = context[:MAX_CONTEXT_CHAR_LENGTH]
+                st.warning(f"Retrieved context was too long and has been truncated to {MAX_CONTEXT_CHAR_LENGTH} characters to fit the model's context window.")
+
 
             # --- Generating the Final Response ---
-            enriched_prompt = f"""You are a helpful assistant. 
-Answer the user's question using ONLY the "Context" information provided below. 
-If the answer cannot be found within the context, respond with "I don't know." 
-Do not use your own knowledge under any circumstances. 
-If the context consists of web search results, cite the source URLs in your answer.
-あなたは親切なアシスタントです。以下の「コンテキスト」情報だけを使って、ユーザーの質問に答えてください。
-コンテキストから答えが見つからない場合は、「分かりません」と答えてください。
-絶対にあなた自身の知識を使わないでください。
-コンテキストがWeb検索結果である場合は、回答に情報源のURLを引用してください。
+            if not context or not context.strip():
+                st.warning("RAG did not find relevant context. The model will answer from its general knowledge.")
+                # When no context is found, instruct the model to answer directly.
+                enriched_prompt = f"""You are a helpful assistant. Please answer the user's question based on your general knowledge.
+あなたは親切なアシスタントです。あなた自身の知識に基づいて、ユーザーの質問に答えてください。
+
+# ユーザーの質問
+{prompt}
+"""
+            else:
+                # When context is found, instruct the model to use it, but fall back to general knowledge if the context is irrelevant.
+                enriched_prompt = f"""You are a helpful assistant. 
+Use the provided "Context" to answer the user's question.
+If the context seems irrelevant or does not contain the answer, please answer the question based on your general knowledge.
+When using web search results as context, always include the source URLs as citations in your answer.
+あなたは親切なアシスタントです。
+提供された「コンテキスト」を使って、ユーザーの質問に答えてください。
+コンテキストが質問に関係ない場合や、答えが含まれていない場合は、あなた自身の知識に基づいて回答してください。
+コンテキストがWeb検索結果である場合は、必ず回答に情報源のURLを引用してください。
 
 # コンテキスト
 {context}
@@ -1068,12 +1089,16 @@ If the context consists of web search results, cite the source URLs in your answ
 """
 
             if st.session_state.inference_engine == "Unsloth":
-                 try:
-                    payload = { "prompt": enriched_prompt, "history": st.session_state.messages[:-1] }
-                    response = requests.post(f"{UNSLOTH_URL}/generate", json=payload)
-                    response.raise_for_status()
-                    full_response = response.json().get("response", "")
-                 except requests.exceptions.RequestException as e:
+                try:
+                    # Simplify the payload to send only the final enriched prompt,
+                    # avoiding potential complexities with sending the full history to this endpoint.
+                    payload = {"conversation": [{"role": "user", "content": enriched_prompt}]}
+                    with requests.post(f"{UNSLOTH_URL}/generate", json=payload, stream=True) as response:
+                        response.raise_for_status()
+                        for chunk in response.iter_content(chunk_size=None, decode_unicode=True):
+                            full_response += chunk
+                            message_placeholder.markdown(full_response)
+                except requests.exceptions.RequestException as e:
                     full_response = f"An error occurred during Unsloth inference: {str(e)}"
 
             elif client and model_name:

@@ -24,7 +24,9 @@ RUN git clone https://github.com/ggerganov/llama.cpp.git /opt/llama.cpp && \
 
 # Install dependencies for AWQ and BitsAndBytes quantization
 # vllm[awq] ensures all necessary dependencies for AWQ are installed.
-RUN pip install "vllm[awq]" bitsandbytes
+RUN pip install --upgrade pip
+RUN pip install "vllm[awq,flashinfer]" bitsandbytes peft 
+RUN pip install llmcompressor --no-deps
 
 # Switch back to original user if the vLLM base image uses a non-root user
 # (vLLM images typically run as root, but it's good practice to be aware)

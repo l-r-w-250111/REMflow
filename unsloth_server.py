@@ -51,6 +51,7 @@ async def lifespan(app: FastAPI):
             print("LoRA adapter applied successfully.", file=sys.stderr)
 
         model.eval()
+        FastLanguageModel.for_inference(model)
         print("Model loaded successfully.", file=sys.stderr)
 
     except Exception as e:
@@ -98,7 +99,7 @@ async def generate_text_stream(request: GenerateRequest):
 
     try:
         final_prompt = tokenizer.apply_chat_template(request.conversation, tokenize=False, add_generation_prompt=True)
-        input_ids = tokenizer(final_prompt, return_tensors="pt", padding=True).input_ids.to("cuda")
+        input_ids = tokenizer(final_prompt, return_tensors="pt", padding=True).input_ids.to("cuda") #2512211943ADD padding=True
         
         streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
 
@@ -114,11 +115,26 @@ async def generate_text_stream(request: GenerateRequest):
         thread.start()
 
         async def response_generator():
-            for new_text in streamer:
-                yield new_text
+            try:
+                for new_text in streamer:
+                    yield new_text
+            except RuntimeError as e:
+                if "CUDA out of memory" in str(e):
+                    print(f"Caught CUDA out of memory error: {e}", file=sys.stderr)
+                    # We can't yield an error message here as the headers are already sent.
+                    # The client will experience a broken connection, which we will handle.
+                else:
+                    raise e # Re-raise other runtime errors
 
         return StreamingResponse(response_generator(), media_type="text/plain")
 
+    except RuntimeError as e:
+        if "CUDA out of memory" in str(e):
+            print(f"Error during streaming generation setup: {e}", file=sys.stderr)
+            raise HTTPException(status_code=500, detail="CUDA out of memory")
+        else:
+            print(f"Unhandled RuntimeError during streaming generation: {e}", file=sys.stderr)
+            raise HTTPException(status_code=500, detail=f"An unexpected runtime error occurred: {str(e)}")
     except Exception as e:
         print(f"Error during streaming generation: {e}", file=sys.stderr)
         raise HTTPException(status_code=500, detail=f"An error occurred during text generation: {str(e)}")
@@ -133,7 +149,7 @@ async def generate_text_non_streaming(request: GenerateNonStreamingRequest):
         # For routing, apply the chat template to ensure the model understands the instruction format.
         conversation = [{"role": "user", "content": request.prompt}]
         final_prompt = tokenizer.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
-        input_ids = tokenizer(final_prompt, return_tensors="pt", padding=True).input_ids.to("cuda")
+        input_ids = tokenizer(final_prompt, return_tensors="pt", padding=True).input_ids.to("cuda") #2512211943ADD padding=True
 
         with torch.no_grad():
             # Generate a short response suitable for a routing decision

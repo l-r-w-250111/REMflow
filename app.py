@@ -338,16 +338,23 @@ with st.sidebar:
                         st.info("Unsloth server is starting. Polling for readiness...")
                         
                         start_time = time.time()
-                        timeout = 120 # 2 minutes
+                        timeout = 300  # 5 minutes, same as vLLM
                         server_ready = False
-                        
-                        with st.spinner("Waiting for Unsloth server to become available..."):
-                            while time.time() - start_time < timeout:
-                                if check_unsloth_server_status():
-                                    server_ready = True
-                                    break
-                                time.sleep(5)
-                        
+                        progress_bar = st.progress(0)
+                        st.warning("Unsloth server is starting. Larger models can take several minutes to load.")
+
+                        while time.time() - start_time < timeout:
+                            elapsed_time = time.time() - start_time
+                            progress_percentage = int((elapsed_time / timeout) * 100)
+                            progress_bar.progress(progress_percentage, text=f"Waiting for server... ({int(elapsed_time)}s / {timeout}s)")
+
+                            if check_unsloth_server_status():
+                                server_ready = True
+                                break
+                            time.sleep(5)
+
+                        progress_bar.empty()
+
                         if server_ready:
                             st.success("Unsloth server started successfully!")
                         else:
@@ -1094,24 +1101,31 @@ When using web search results as context, always include the source URLs as cita
                     # avoiding potential complexities with sending the full history to this endpoint.
                     payload = {"conversation": [{"role": "user", "content": enriched_prompt}]}
                     with requests.post(f"{UNSLOTH_URL}/generate", json=payload, stream=True) as response:
-                        response.raise_for_status()
-                        for chunk in response.iter_content(chunk_size=None, decode_unicode=True):
-                            full_response += chunk
-                            message_placeholder.markdown(full_response)
+                        if response.status_code == 500 and "CUDA out of memory" in response.text:
+                            full_response = "The model ran out of GPU memory. Please try a shorter prompt or restart the server with a smaller model."
+                        else:
+                            response.raise_for_status()
+                            for chunk in response.iter_content(chunk_size=None, decode_unicode=True):
+                                full_response += chunk
+                                message_placeholder.markdown(full_response)
                 except requests.exceptions.RequestException as e:
                     full_response = f"An error occurred during Unsloth inference: {str(e)}"
 
             elif client and model_name:
                 try:
-                    chat_completion = client.chat.completions.create(
+                    stream = client.chat.completions.create(
                         messages=[
                             {"role": "system", "content": "You are a helpful assistant."},
                             {"role": "user", "content": enriched_prompt},
                         ],
                         model=model_name,
                         temperature=0.1,
+                        stream=True,
                     )
-                    full_response = chat_completion.choices[0].message.content
+                    for chunk in stream:
+                        content = chunk.choices[0].delta.content or ""
+                        full_response += content
+                        message_placeholder.markdown(full_response)
                 except Exception as e:
                     full_response = f"An error occurred during inference: {str(e)}"
 

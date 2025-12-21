@@ -41,10 +41,20 @@ def main():
 
     # PEFT and LoRA setup
     model = prepare_model_for_kbit_training(model)
+
+    # Define target modules based on training type
+    sft_target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+    if args.training_type == 'cpt':
+        target_modules = sft_target_modules + ["embed_tokens", "lm_head"]
+        print(f"CPT training detected. Targeting modules: {target_modules}")
+    else:
+        target_modules = sft_target_modules
+        print(f"SFT training detected. Targeting modules: {target_modules}")
+
     peft_config = LoraConfig(
         r=16,
         lora_alpha=16,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        target_modules=target_modules,
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",

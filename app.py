@@ -891,19 +891,20 @@ with st.sidebar:
             else:
                 model_path = os.path.join(base_model_dir, selected_base_model_deploy)
                 command = get_docker_compose_command()
+                # Execute in 'vllm' container with 'python3'
                 command.extend([
-                    "exec", "unsloth", "python", "/app/quantize_to_awq.py",
+                    "exec", "vllm", "python3", "/app/quantize_to_awq.py",
                     "--model_path", model_path,
                     "--output_path", awq_output_path
                 ])
 
-                # Add lora if selected
+                # Add lora if selected (this functionality is preserved)
                 if selected_loras:
                     command.append("--lora_names")
                     command.extend(selected_loras)
                 
-                if is_4bit_model:
-                    command.append("--is_4bit")
+                # The --is_4bit flag was specific to the Unsloth loader and is no longer needed.
+                # The new script uses the standard transformers library.
 
                 with st.spinner(f"Quantizing '{selected_base_model_deploy}' to AWQ..."):
                     st.write("Running command:")
@@ -1010,6 +1011,8 @@ if prompt := st.chat_input("What is your question?"):
                 router_prompt = f"""
                 Given the user's query, decide if you should use a web search for up-to-date information
                 or a local document search (RAG) for contextual information.
+                ユーザーの質問に基づき、最新情報を得るために「ウェブ検索」を利用すべきか、あるいはコンテキスト情報を得るために
+                「ローカルドキュメント検索（RAG）」を利用すべきかを判断してください。
 
                 User Query: "{prompt}"
 
@@ -1054,11 +1057,11 @@ if prompt := st.chat_input("What is your question?"):
 Answer the user's question using ONLY the "Context" information provided below. 
 If the answer cannot be found within the context, respond with "I don't know." 
 Do not use your own knowledge under any circumstances. 
-If the context consists of web search results, cite the source URLs in your answer.
+When using web search results as context, always include the source URLs as citations in your answer.
 あなたは親切なアシスタントです。以下の「コンテキスト」情報だけを使って、ユーザーの質問に答えてください。
 コンテキストから答えが見つからない場合は、「分かりません」と答えてください。
 絶対にあなた自身の知識を使わないでください。
-コンテキストがWeb検索結果である場合は、回答に情報源のURLを引用してください。
+コンテキストがWeb検索結果である場合は、必ず回答に情報源のURLを引用してください。
 
 # コンテキスト
 {context}

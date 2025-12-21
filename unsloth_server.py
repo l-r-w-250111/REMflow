@@ -1,3 +1,4 @@
+from unsloth import FastLanguageModel
 import os
 import sys
 import torch
@@ -5,8 +6,10 @@ import json
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
+from starlette.responses import StreamingResponse
+from transformers import TextIteratorStreamer
+from threading import Thread
 
-from unsloth import FastLanguageModel
 
 # Suppress Unsloth's welcome message on startup
 os.environ["UNSLOTH_SUPPRESS_STDOUT"] = "true"
@@ -64,14 +67,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # --- Pydantic Models for Request/Response ---
+from typing import List, Dict
+
 class GenerateRequest(BaseModel):
+    conversation: List[Dict[str, str]]
+
+class GenerateNonStreamingRequest(BaseModel):
     prompt: str
-    history: list = []
-    is_cpt_model: bool = False
 
-class GenerateResponse(BaseModel):
+class GenerateNonStreamingResponse(BaseModel):
     response: str
-
 
 # --- API Endpoints ---
 @app.get("/health")
@@ -80,31 +85,60 @@ async def health_check():
     if model is not None and tokenizer is not None:
         return {"status": "ok", "message": "Server and model are ready."}
     else:
-        # Provide a more specific error message if the model path was missing
         if not os.getenv("BASE_MODEL_PATH"):
             raise HTTPException(status_code=503, detail="Server is running, but model is not loaded: BASE_MODEL_PATH env var was not set.")
         else:
             raise HTTPException(status_code=503, detail="Server is running, but model failed to load. Check server logs.")
 
-@app.post("/generate", response_model=GenerateResponse)
-async def generate_text(request: GenerateRequest):
-    """Generates text based on a prompt and conversation history."""
+@app.post("/generate")
+async def generate_text_stream(request: GenerateRequest):
+    """Generates text based on a prompt and streams the response."""
     if model is None or tokenizer is None:
         raise HTTPException(status_code=503, detail="Model is not loaded. Cannot process request.")
 
     try:
-        if request.is_cpt_model:
-            final_prompt = request.prompt
-            input_ids = tokenizer(final_prompt, return_tensors="pt").input_ids.to("cuda")
-        else:
-            conversation = request.history + [{"role": "user", "content": request.prompt}]
-            final_prompt = tokenizer.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
-            input_ids = tokenizer(final_prompt, return_tensors="pt").input_ids.to("cuda")
+        final_prompt = tokenizer.apply_chat_template(request.conversation, tokenize=False, add_generation_prompt=True)
+        input_ids = tokenizer(final_prompt, return_tensors="pt").input_ids.to("cuda")
+        
+        streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
+
+        generation_kwargs = dict(
+            input_ids=input_ids,
+            streamer=streamer,
+            max_new_tokens=2048, # Increased max_new_tokens
+            use_cache=True,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+
+        thread = Thread(target=model.generate, kwargs=generation_kwargs)
+        thread.start()
+
+        async def response_generator():
+            for new_text in streamer:
+                yield new_text
+
+        return StreamingResponse(response_generator(), media_type="text/plain")
+
+    except Exception as e:
+        print(f"Error during streaming generation: {e}", file=sys.stderr)
+        raise HTTPException(status_code=500, detail=f"An error occurred during text generation: {str(e)}")
+
+@app.post("/generate_non_streaming", response_model=GenerateNonStreamingResponse)
+async def generate_text_non_streaming(request: GenerateNonStreamingRequest):
+    """Generates a short, non-streamed response, intended for routing or quick checks."""
+    if model is None or tokenizer is None:
+        raise HTTPException(status_code=503, detail="Model is not loaded. Cannot process request.")
+
+    try:
+        # For routing, we don't need conversation history.
+        final_prompt = request.prompt
+        input_ids = tokenizer(final_prompt, return_tensors="pt").input_ids.to("cuda")
 
         with torch.no_grad():
+            # Generate a short response suitable for a routing decision
             outputs = model.generate(
                 input_ids=input_ids,
-                max_new_tokens=256,
+                max_new_tokens=10, # Keep it short and fast for routing
                 use_cache=True,
                 pad_token_id=tokenizer.eos_token_id,
             )
@@ -112,10 +146,10 @@ async def generate_text(request: GenerateRequest):
         generated_ids = outputs[0][input_ids.shape[1]:]
         response_text = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
 
-        return GenerateResponse(response=response_text)
+        return GenerateNonStreamingResponse(response=response_text)
 
     except Exception as e:
-        print(f"Error during generation: {e}", file=sys.stderr)
+        print(f"Error during non-streaming generation: {e}", file=sys.stderr)
         raise HTTPException(status_code=500, detail=f"An error occurred during text generation: {str(e)}")
 
 # This part is for direct execution, but we'll use uvicorn via docker compose exec

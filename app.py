@@ -1051,16 +1051,33 @@ if prompt := st.chat_input("What is your question?"):
                     retrieved_nodes = retriever.retrieve(prompt)
                     context = "\n".join([node.get_content() for node in retrieved_nodes])
 
+            # Limit the context length to avoid exceeding the model's token limit.
+            # This is a safeguard against overly large documents in the RAG index.
+            MAX_CONTEXT_CHAR_LENGTH = 10000
+            if len(context) > MAX_CONTEXT_CHAR_LENGTH:
+                context = context[:MAX_CONTEXT_CHAR_LENGTH]
+                st.warning(f"Retrieved context was too long and has been truncated to {MAX_CONTEXT_CHAR_LENGTH} characters to fit the model's context window.")
+
 
             # --- Generating the Final Response ---
-            enriched_prompt = f"""You are a helpful assistant. 
-Answer the user's question using ONLY the "Context" information provided below. 
-If the answer cannot be found within the context, respond with "I don't know." 
-Do not use your own knowledge under any circumstances. 
+            if not context or not context.strip():
+                st.warning("RAG did not find relevant context. The model will answer from its general knowledge.")
+                # When no context is found, instruct the model to answer directly.
+                enriched_prompt = f"""You are a helpful assistant. Please answer the user's question based on your general knowledge.
+あなたは親切なアシスタントです。あなた自身の知識に基づいて、ユーザーの質問に答えてください。
+
+# ユーザーの質問
+{prompt}
+"""
+            else:
+                # When context is found, instruct the model to use it, but fall back to general knowledge if the context is irrelevant.
+                enriched_prompt = f"""You are a helpful assistant. 
+Use the provided "Context" to answer the user's question.
+If the context seems irrelevant or does not contain the answer, please answer the question based on your general knowledge.
 When using web search results as context, always include the source URLs as citations in your answer.
-あなたは親切なアシスタントです。以下の「コンテキスト」情報だけを使って、ユーザーの質問に答えてください。
-コンテキストから答えが見つからない場合は、「分かりません」と答えてください。
-絶対にあなた自身の知識を使わないでください。
+あなたは親切なアシスタントです。
+提供された「コンテキスト」を使って、ユーザーの質問に答えてください。
+コンテキストが質問に関係ない場合や、答えが含まれていない場合は、あなた自身の知識に基づいて回答してください。
 コンテキストがWeb検索結果である場合は、必ず回答に情報源のURLを引用してください。
 
 # コンテキスト

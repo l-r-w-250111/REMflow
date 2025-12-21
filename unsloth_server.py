@@ -130,8 +130,9 @@ async def generate_text_non_streaming(request: GenerateNonStreamingRequest):
         raise HTTPException(status_code=503, detail="Model is not loaded. Cannot process request.")
 
     try:
-        # For routing, we don't need conversation history.
-        final_prompt = request.prompt
+        # For routing, apply the chat template to ensure the model understands the instruction format.
+        conversation = [{"role": "user", "content": request.prompt}]
+        final_prompt = tokenizer.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
         input_ids = tokenizer(final_prompt, return_tensors="pt").input_ids.to("cuda")
 
         with torch.no_grad():

@@ -1033,9 +1033,10 @@ if prompt := st.chat_input("What is your question?"):
                         st.error(f"Error in routing: {e}")
 
                 elif st.session_state.inference_engine == "Unsloth":
+                    # Use the non-streaming endpoint for the synchronous routing task
                     try:
-                        payload = {"prompt": router_prompt, "history": []}
-                        response = requests.post(f"{UNSLOTH_URL}/generate", json=payload)
+                        payload = {"prompt": router_prompt}
+                        response = requests.post(f"{UNSLOTH_URL}/generate_non_streaming", json=payload)
                         response.raise_for_status()
                         decision = response.json().get("response", "RAG").strip().upper()
                     except requests.exceptions.RequestException as e:
@@ -1088,12 +1089,16 @@ When using web search results as context, always include the source URLs as cita
 """
 
             if st.session_state.inference_engine == "Unsloth":
-                 try:
-                    payload = { "prompt": enriched_prompt, "history": st.session_state.messages[:-1] }
-                    response = requests.post(f"{UNSLOTH_URL}/generate", json=payload)
-                    response.raise_for_status()
-                    full_response = response.json().get("response", "")
-                 except requests.exceptions.RequestException as e:
+                try:
+                    # Simplify the payload to send only the final enriched prompt,
+                    # avoiding potential complexities with sending the full history to this endpoint.
+                    payload = {"conversation": [{"role": "user", "content": enriched_prompt}]}
+                    with requests.post(f"{UNSLOTH_URL}/generate", json=payload, stream=True) as response:
+                        response.raise_for_status()
+                        for chunk in response.iter_content(chunk_size=None, decode_unicode=True):
+                            full_response += chunk
+                            message_placeholder.markdown(full_response)
+                except requests.exceptions.RequestException as e:
                     full_response = f"An error occurred during Unsloth inference: {str(e)}"
 
             elif client and model_name:

@@ -98,7 +98,7 @@ async def generate_text_stream(request: GenerateRequest):
 
     try:
         final_prompt = tokenizer.apply_chat_template(request.conversation, tokenize=False, add_generation_prompt=True)
-        input_ids = tokenizer(final_prompt, return_tensors="pt").input_ids.to("cuda")
+        input_ids = tokenizer(final_prompt, return_tensors="pt", padding=True).input_ids.to("cuda")
         
         streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
 
@@ -133,7 +133,7 @@ async def generate_text_non_streaming(request: GenerateNonStreamingRequest):
         # For routing, apply the chat template to ensure the model understands the instruction format.
         conversation = [{"role": "user", "content": request.prompt}]
         final_prompt = tokenizer.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
-        input_ids = tokenizer(final_prompt, return_tensors="pt").input_ids.to("cuda")
+        input_ids = tokenizer(final_prompt, return_tensors="pt", padding=True).input_ids.to("cuda")
 
         with torch.no_grad():
             # Generate a short response suitable for a routing decision

@@ -110,7 +110,11 @@ async def generate_text_stream(request: GenerateRequest):
             pad_token_id=tokenizer.eos_token_id,
         )
 
-        thread = Thread(target=model.generate, kwargs=generation_kwargs)
+        def generate_in_thread():
+            with torch.inference_mode():
+                model.generate(**generation_kwargs)
+
+        thread = Thread(target=generate_in_thread)
         thread.start()
 
         async def response_generator():
@@ -135,7 +139,7 @@ async def generate_text_non_streaming(request: GenerateNonStreamingRequest):
         final_prompt = tokenizer.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
         input_ids = tokenizer(final_prompt, return_tensors="pt").input_ids.to("cuda")
 
-        with torch.no_grad():
+        with torch.inference_mode():
             # Generate a short response suitable for a routing decision
             outputs = model.generate(
                 input_ids=input_ids,
